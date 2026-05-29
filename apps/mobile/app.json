@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "버틀러 점검자",
+    "slug": "butler-inspector",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": false,
+    "splash": {
+      "backgroundColor": "#3182F6"
+    }
+  }
+}

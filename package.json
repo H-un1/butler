@@ -1,0 +1,27 @@
+{
+  "name": "butler",
+  "version": "0.1.0",
+  "private": true,
+  "description": "버틀러(Butler) — 원격 임대인 부동산 자산관리 SaaS (Phase 1 MVP)",
+  "workspaces": [
+    "packages/*",
+    "services/api-node",
+    "apps/web",
+    "apps/mobile"
+  ],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "dev:api": "npm --workspace services/api-node run dev",
+    "dev:web": "npm --workspace apps/web run dev",
+    "dev:mobile": "npm --workspace apps/mobile run start",
+    "doctor": "npx react-doctor@latest"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "react-doctor": "^0.2.10"
+  }
+}

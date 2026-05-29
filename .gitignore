@@ -1,0 +1,49 @@
+# dependencies
+node_modules/
+.pnp.*
+.yarn/
+
+# build
+dist/
+build/
+.next/
+.expo/
+*.tsbuildinfo
+
+# env (never commit secrets — .env.example만 커밋)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# other AI tool skill folders (Claude Code only — .claude/만 사용)
+.agents/
+
+# coverage
+coverage/
+.nyc_output/
+
+# uploads (local 개발 시 점검 사진 임시 저장 — 실 환경은 S3)
+uploads/

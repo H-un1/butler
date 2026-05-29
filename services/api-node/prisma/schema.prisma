@@ -1,0 +1,578 @@
+// 버틀러 — DB 스키마 (Phase 1)
+// 02_DATA_MODEL.md를 그대로 옮긴 것. 변경 시 02_DATA_MODEL.md도 함께 수정.
+// Lease 엔티티는 임차인(TENANT)이 활성화되는 Phase 2에서 추가.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  LANDLORD
+  INSPECTOR
+  ADMIN
+  TENANT // Phase 2 활성화
+}
+
+enum AuthProvider {
+  kakao
+  naver
+  dev_mock @map("dev-mock")
+}
+
+enum InspectionType {
+  REGULAR
+  REPAIR
+  MOVE_OUT
+}
+
+enum InspectionStatus {
+  REQUESTED
+  SCHEDULED
+  IN_PROGRESS
+  DONE
+}
+
+enum InspectionGrade {
+  A
+  B
+  C
+  D
+  E
+  F
+}
+
+enum ReportStatus {
+  GENERATED
+  SHARED
+}
+
+enum HouseLogType {
+  INSPECTION
+  REPAIR
+  CONTRACT
+  OWNER_CHANGE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+}
+
+enum SubscriptionTier {
+  TIER_1
+  TIER_2
+  TIER_3
+}
+
+// === Phase 2 enums ===
+
+enum LeaseStatus {
+  PENDING // 임차인 미연결(초대 발급됨)
+  ACTIVE
+  ENDED
+}
+
+enum MaintenanceCategory {
+  PLUMBING
+  ELECTRICAL
+  APPLIANCE
+  STRUCTURAL
+  ETC
+}
+
+enum MaintenanceStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+  REJECTED
+}
+
+enum SettlementStatus {
+  DRAFT
+  PROPOSED
+  DISPUTED
+  AGREED
+  REJECTED
+}
+
+enum SettlementEventType {
+  COMPUTED
+  PROPOSED
+  DISPUTED
+  AGREED
+  REJECTED
+  COMMENT
+}
+
+enum NotificationType {
+  CONTRACT_EXPIRY
+  RENT_OVERDUE
+  MAINTENANCE
+  REPORT_READY
+  SETTLEMENT
+  PAYMENT
+}
+
+enum NotificationChannel {
+  IN_APP
+  KAKAO
+  SMS
+}
+
+enum PaymentType {
+  SUBSCRIPTION
+  SETTLEMENT
+  RENT
+}
+
+enum PaymentStatus {
+  REQUESTED
+  PAID
+  FAILED
+  CANCELED
+}
+
+enum VoteStatus {
+  OPEN
+  CLOSED
+}
+
+enum ChatbotTopic {
+  LEASE_LAW
+  TAX
+  GENERAL
+}
+
+enum OcrSafetyGrade {
+  SAFE
+  CAUTION
+  DANGER
+}
+
+// 사용자 — 주민번호 등 고유식별정보는 절대 저장하지 않는다.
+// PASS 본인인증의 결과(verifiedAt)만 보관.
+model User {
+  id              String        @id
+  role            Role
+  name            String
+  phone           String
+  email           String?       @unique
+  authProvider    AuthProvider
+  providerUserId  String
+  verifiedAt      DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  properties      Property[]    @relation("OwnerProperties")
+  inspections     Inspection[]  @relation("InspectorInspections")
+  subscriptions   Subscription[]
+
+  // Phase 2
+  leasesAsLandlord Lease[]              @relation("LandlordLeases")
+  leasesAsTenant   Lease[]              @relation("TenantLeases")
+  maintenanceRequests MaintenanceRequest[] @relation("RequesterMaintenance")
+  maintenanceComments MaintenanceComment[]
+
+  @@unique([authProvider, providerUserId])
+  @@index([role])
+}
+
+// 물건 — 임대인이 보유. 공공데이터(국토부/건축물대장/K-APT)가 자동 채워짐 (M2)
+model Property {
+  id            String          @id
+  ownerId       String
+  owner         User            @relation("OwnerProperties", fields: [ownerId], references: [id], onDelete: Restrict)
+
+  address       String
+  complexName   String?
+  dong          String?
+  ho            String?
+  areaM2        Decimal?        @db.Decimal(6, 2)
+  builtYear     Int?
+  parking       String?
+  mgmtFee       Int?
+  marketPrice   BigInt?
+  amiScore      Int?
+
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  houseLogs     HouseLogEntry[]
+  inspections   Inspection[]
+
+  // Phase 2
+  leases               Lease[]
+  maintenanceRequests  MaintenanceRequest[]
+
+  @@index([ownerId])
+}
+
+// 생애주기 기록 — append-only. 수정·삭제 금지 (04_PROJECT_SPEC "절대 하지 마").
+// 애플리케이션 레이어와 DB 레이어(트리거)에서 모두 강제.
+model HouseLogEntry {
+  id              String        @id
+  propertyId      String
+  property        Property      @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+
+  type            HouseLogType
+  title           String
+  occurredAt      DateTime
+  refId           String?
+  attachmentUrls  Json?
+
+  createdAt       DateTime      @default(now())
+
+  @@index([propertyId, occurredAt])
+}
+
+// 점검
+model Inspection {
+  id            String              @id
+  propertyId    String
+  property      Property            @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  inspectorId   String
+  inspector     User                @relation("InspectorInspections", fields: [inspectorId], references: [id], onDelete: Restrict)
+
+  type          InspectionType
+  status        InspectionStatus    @default(REQUESTED)
+  scheduledAt   DateTime
+
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  items         InspectionItem[]
+  report        Report?
+
+  @@index([propertyId])
+  @@index([inspectorId])
+  @@index([status])
+}
+
+model InspectionItem {
+  id            String          @id
+  inspectionId  String
+  inspection    Inspection      @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+
+  area          String
+  checklistKey  String
+  grade         InspectionGrade
+  photoUrls     Json?
+  note          String?         @db.Text
+  markedDefect  Boolean         @default(false)
+
+  createdAt     DateTime        @default(now())
+
+  @@index([inspectionId])
+}
+
+model Report {
+  id            String        @id
+  inspectionId  String        @unique
+  inspection    Inspection    @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+
+  pdfUrl        String
+  generatedAt   DateTime
+  sharedWith    Json?         // user id 목록
+  status        ReportStatus  @default(GENERATED)
+}
+
+// 구독 — 보유 물건수 기반 + 구간 할인
+model Subscription {
+  id              String              @id
+  landlordId      String
+  landlord        User                @relation(fields: [landlordId], references: [id], onDelete: Restrict)
+
+  propertyCount   Int
+  tier            SubscriptionTier
+  monthlyFee      Int
+  status          SubscriptionStatus  @default(ACTIVE)
+  billingDate     Int                 // 매월 결제일 (1~28)
+
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@index([landlordId])
+}
+
+// === Phase 2 모델 ===
+
+// 임대차 계약 — 임대인-임차인을 연결. tenantId는 초대 수락 전까지 null(PENDING).
+model Lease {
+  id           String       @id
+  propertyId   String
+  property     Property     @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  landlordId   String
+  landlord     User         @relation("LandlordLeases", fields: [landlordId], references: [id], onDelete: Restrict)
+  tenantId     String?
+  tenant       User?        @relation("TenantLeases", fields: [tenantId], references: [id], onDelete: SetNull)
+
+  status       LeaseStatus  @default(PENDING)
+  deposit      BigInt
+  rent         Int?
+  startAt      DateTime
+  endAt        DateTime
+
+  // 임차인 초대 토큰 — 수락 시 tenantId 채워지고 토큰 소거. 고유식별정보 미포함.
+  inviteToken  String?      @unique
+  invitedPhone String?      // 초대 대상 연락처(선택) — 주민번호 등 고유식별정보 아님
+
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  maintenanceRequests MaintenanceRequest[]
+  settlements         Settlement[]
+
+  @@index([propertyId])
+  @@index([landlordId])
+  @@index([tenantId])
+}
+
+// 수선요청 — 임차인이 생성, 이슈 협업보드로 임대인·관리자·임차인이 공동 관리.
+model MaintenanceRequest {
+  id           String              @id
+  propertyId   String
+  property     Property            @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  leaseId      String?
+  lease        Lease?              @relation(fields: [leaseId], references: [id], onDelete: SetNull)
+  requesterId  String
+  requester    User                @relation("RequesterMaintenance", fields: [requesterId], references: [id], onDelete: Restrict)
+
+  category     MaintenanceCategory
+  title        String
+  description  String?             @db.Text
+  status       MaintenanceStatus   @default(OPEN)
+  photoUrls    Json?
+
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  comments     MaintenanceComment[]
+
+  @@index([propertyId])
+  @@index([leaseId])
+  @@index([requesterId])
+  @@index([status])
+}
+
+// 수선비 정산 — 룰베이스(LH 부담기준표+표준 내구연수+감가상각) 산출 + 양측 합의.
+// 산출 결과(lines)와 근거(basis)는 동결 스냅샷으로 JSON 보관 (재계산해도 합의 시점 근거 유지).
+// 보증금 자동공제 없음 — 합의(AGREED) 후 (mock)결제로 분리 (M3).
+model Settlement {
+  id            String            @id
+  leaseId       String
+  lease         Lease             @relation(fields: [leaseId], references: [id], onDelete: Restrict)
+  inspectionId  String?           // 근거가 된 MOVE_OUT 점검
+  landlordId    String
+  tenantId      String?
+
+  status        SettlementStatus  @default(DRAFT)
+  ruleVersion   String
+  totalCost     Int
+  tenantTotal   Int
+  landlordTotal Int
+  lines         Json              // 동결된 라인별 산출 스냅샷
+  basis         Json              // 내구연수표·부담비율·감가상각 공식 등 근거 스냅샷
+
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  events        SettlementEvent[]
+
+  @@index([leaseId])
+  @@index([landlordId])
+  @@index([tenantId])
+  @@index([status])
+}
+
+// 정산 합의 이력 — append-only (산출/제안/이의/합의/결렬/코멘트).
+model SettlementEvent {
+  id            String              @id
+  settlementId  String
+  settlement    Settlement          @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  actorId       String
+  type          SettlementEventType
+  note          String?             @db.Text
+  createdAt     DateTime            @default(now())
+
+  @@index([settlementId, createdAt])
+}
+
+// 이슈보드 코멘트·이력 — append-only 아카이빙(상태전이 이력도 시스템 코멘트로 기록).
+model MaintenanceComment {
+  id           String              @id
+  requestId    String
+  request      MaintenanceRequest  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  authorId     String
+  author       User                @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  body         String              @db.Text
+  // 상태전이 자동 기록 여부 (사람 코멘트 vs 시스템 이력)
+  systemEvent  Boolean             @default(false)
+
+  createdAt    DateTime            @default(now())
+
+  @@index([requestId, createdAt])
+}
+
+// 알림 — 자동알림 룰이 생성. 실제 발송(카카오/SMS)은 mock(발송 로그만), 인앱은 항상 노출.
+model Notification {
+  id            String              @id
+  recipientId   String              // 수신 User
+  type          NotificationType
+  channel       NotificationChannel @default(IN_APP)
+  title         String
+  body          String?             @db.Text
+  refId         String?             // 연결 엔티티(lease/settlement/maintenance/payment) id
+  readAt        DateTime?
+  // mock 발송 결과(실 발송 아님) — 발송 어댑터가 남기는 로그성 필드
+  sentMock      Boolean             @default(false)
+
+  createdAt     DateTime            @default(now())
+
+  @@index([recipientId, createdAt])
+  @@index([type])
+}
+
+// 결제 — ⚠️ mock PG로만 동작(실 결제 0). 구독료/정산금/월세 기록.
+// 보증금 자동공제 없음 — 정산은 합의(AGREED) 후 별도 결제로만 처리.
+model Payment {
+  id            String         @id
+  payerId       String         // 결제 주체 User
+  type          PaymentType
+  refId         String         // subscriptionId / settlementId / leaseId
+  amount        Int
+  status        PaymentStatus  @default(REQUESTED)
+  provider      String         @default("mock") // 실 PG 미연동 표식
+  mockChargeId  String?
+  period        String?        // 월세 등 정기 결제 귀속 기간 (예: "2026-05")
+  paidAt        DateTime?
+
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([payerId])
+  @@index([type, refId])
+  @@index([status])
+}
+
+// === Phase 3 (M4) — 단지 커뮤니티 · 전자투표 · 보수업체 ===
+// 커뮤니티/투표는 단지(complexName) 단위 폐쇄형. 실소유주/거주자 게이트는 서비스 레이어에서
+// Property 소유 또는 ACTIVE Lease 보유로 검증(가입 차단).
+
+model CommunityPost {
+  id          String         @id
+  complexName String
+  authorId    String
+  title       String
+  body        String         @db.Text
+  createdAt   DateTime       @default(now())
+
+  comments    PostComment[]
+
+  @@index([complexName, createdAt])
+}
+
+model PostComment {
+  id        String        @id
+  postId    String
+  post      CommunityPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  authorId  String
+  body      String        @db.Text
+  createdAt DateTime      @default(now())
+
+  @@index([postId, createdAt])
+}
+
+model Vote {
+  id          String     @id
+  complexName String
+  creatorId   String
+  title       String
+  description String?     @db.Text
+  options     Json        // 선택지 문자열 배열
+  status      VoteStatus  @default(OPEN)
+  closesAt    DateTime?
+  createdAt   DateTime    @default(now())
+
+  ballots     Ballot[]
+
+  @@index([complexName, createdAt])
+}
+
+model Ballot {
+  id          String   @id
+  voteId      String
+  vote        Vote     @relation(fields: [voteId], references: [id], onDelete: Cascade)
+  voterId     String
+  optionIndex Int
+  createdAt   DateTime @default(now())
+
+  @@unique([voteId, voterId]) // 1인 1표
+  @@index([voteId])
+}
+
+model Vendor {
+  id          String              @id
+  name        String
+  category    MaintenanceCategory
+  region      String
+  phone       String?
+  description String?             @db.Text
+  createdAt   DateTime            @default(now())
+
+  reviews     VendorReview[]
+
+  @@index([category, region])
+}
+
+model VendorReview {
+  id        String   @id
+  vendorId  String
+  vendor    Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  authorId  String
+  rating    Int      // 1~5
+  comment   String?  @db.Text
+  createdAt DateTime @default(now())
+
+  @@unique([vendorId, authorId]) // 1인 1리뷰
+  @@index([vendorId])
+}
+
+// === Phase 3 (M5) — AI 보조 (전부 mock) ===
+// ⚠️ 챗봇/OCR/판례는 mock — 외부 모델 호출 0. 주민번호 등 고유식별정보는 저장하지 않는다.
+
+model ChatbotLog {
+  id        String       @id
+  userId    String
+  question  String       @db.Text
+  answer    String       @db.Text
+  topic     ChatbotTopic
+  mock      Boolean      @default(true)
+  createdAt DateTime     @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// 등기부 OCR 결과 — ⚠️ 주민번호 평문 절대 저장 금지. 마스킹된 값/요약만 보관.
+model OcrDocument {
+  id           String         @id
+  userId       String
+  address      String
+  ownerMasked  String         // 마스킹된 소유자 표기 (주민번호 비저장)
+  safetyGrade  OcrSafetyGrade
+  safetyReason String         @db.Text
+  totalDebt    Int            @default(0)
+  marketPrice  Int?
+  result       Json           // 권리관계 등 마스킹된 파싱 결과 스냅샷
+  mock         Boolean        @default(true)
+  createdAt    DateTime       @default(now())
+
+  @@index([userId, createdAt])
+}

@@ -9,13 +9,13 @@
 ## 전체 구조
 
 ```
-User (사용자)
+User (사용자: LANDLORD / INSPECTOR / ADMIN — TENANT는 Phase 2부터)
   └─1:N─> Property (물건/자산)
-              ├─1:N─> Lease (계약) ──── tenant_id ──> User(임차인)
               ├─1:N─> HouseLogEntry (생애주기 기록)
-              └─1:N─> Inspection (점검) ── inspector_id ──> User(점검자)
-                          └─1:N─> InspectionItem (점검항목)
-                                      └─(집계)─> Report (리포트 PDF)
+              ├─1:N─> Inspection (점검) ── inspector_id ──> User(점검자)
+              │           └─1:N─> InspectionItem (점검항목)
+              │                       └─(집계)─> Report (리포트 PDF)
+              └─1:N─> Lease (계약, Phase 2) ── tenant_id ──> User(임차인, Phase 2)
 
 User(임대인) ─1:N─> Subscription (구독/과금)
 
@@ -32,12 +32,12 @@ Vendor / Community / ChatbotLog
 ## 엔티티 상세 (Phase 1)
 
 ### User (사용자)
-서비스를 쓰는 모든 사람. 역할(role)로 임대인·임차인·점검자·관리자를 구분한다.
+서비스를 쓰는 모든 사람. 역할(role)로 임대인·점검자·관리자를 구분한다(임차인은 Phase 2부터).
 
 | 필드 | 설명 | 예시 | 필수 |
 |------|------|------|------|
 | id | 고유 식별자 (자동 생성) | usr_a1b2 | O |
-| role | 역할 (LANDLORD/TENANT/INSPECTOR/ADMIN) | LANDLORD | O |
+| role | 역할 (LANDLORD/INSPECTOR/ADMIN, TENANT는 Phase 2) | LANDLORD | O |
 | name | 이름 | 홍길동 | O |
 | phone | 연락처 | 010-1234-5678 | O |
 | email | 이메일 | hong@example.com | X |
@@ -65,8 +65,8 @@ Vendor / Community / ChatbotLog
 | ami_score | 자산관리지수 (자체 산출) | 82 | X |
 | created_at | 등록일 | 2026-05-24 | O |
 
-### Lease (계약)
-한 물건에 대한 임대차 계약. 임대인-임차인을 연결한다.
+### Lease (계약) — **Phase 2 활성화**
+한 물건에 대한 임대차 계약. 임대인-임차인을 연결한다. Phase 1은 임차인 역할을 다루지 않으므로 Lease 엔티티는 Phase 2 시작 시점에 활성화한다(스키마는 참고용으로 미리 정의).
 
 | 필드 | 설명 | 예시 | 필수 |
 |------|------|------|------|
@@ -149,8 +149,8 @@ Vendor / Community / ChatbotLog
 ## 관계 요약
 
 - **User(임대인) 1명** → 여러 **Property**.
-- **Property 1개** → 여러 **Lease**, 여러 **HouseLogEntry**, 여러 **Inspection**.
-- **Lease**는 임대인(landlord_id)과 임차인(tenant_id) 두 User를 연결.
+- **Property 1개** → 여러 **HouseLogEntry**, 여러 **Inspection**, (Phase 2) 여러 **Lease**.
+- **Lease**는 임대인(landlord_id)과 임차인(tenant_id) 두 User를 연결 — **Phase 2 활성화**.
 - **Inspection 1건** → 여러 **InspectionItem** → 집계되어 1개의 **Report** 생성.
 - **Report / Inspection / 수리 / 계약** 사건은 모두 **HouseLogEntry**로 타임라인에 누적.
 - **User(임대인)** → 여러 **Subscription**(보통 1개 활성).
@@ -159,7 +159,9 @@ Vendor / Community / ChatbotLog
 
 ## Phase 2+ 엔티티 (연결점)
 
-- **MaintenanceRequest** (수선요청) → Property/Lease. 임차인이 요청, 이슈보드로 협업.
+- **MaintenanceRequest** (수선요청) → Property/Lease. 임차인이 요청, 이슈보드로 협업. **(Phase 2 M1 활성화)** 상태: OPEN/IN_PROGRESS/RESOLVED/CLOSED/REJECTED, 카테고리: PLUMBING/ELECTRICAL/APPLIANCE/STRUCTURAL/ETC.
+  - **MaintenanceComment** (수선요청 코멘트·이력) → MaintenanceRequest. 코멘트와 상태전이 이력을 append-only로 아카이빙(systemEvent 플래그로 시스템 이력 구분). **(Phase 2 M1 추가)**
+- **Lease** (임대차) → Phase 2 M1에서 활성화. PENDING(초대 발급)→ACTIVE(임차인 연결, 1회용 inviteToken 소거)→ENDED. 고유식별정보 미저장.
 - **Settlement** (수선비 정산) → Lease 기반. 룰베이스 분담비율, 근거 데이터(LH기준·감가상각·내구연수) 스냅샷 포함.
 - **Payment** (결제) → Subscription(구독료) / Settlement(정산금). PG 연동.
 - **Notification** (알림) → User. 계약만료/미납/수선/리포트도착.
